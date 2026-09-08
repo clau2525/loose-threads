@@ -159,6 +159,17 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
 .note.bad{color:var(--warn)}
 .kv{display:flex;gap:10px;font-size:13px;color:var(--ink-2);align-items:baseline}
 .kv b{font-weight:500;color:var(--ink)}
+.statuscard{gap:0}
+.srow{display:grid;grid-template-columns:auto 1fr;gap:0 13px;align-items:start;padding:15px 0;border-top:1px solid var(--rule)}
+.srow:first-child{border-top:none;padding-top:0}
+.srow:last-child{padding-bottom:0}
+.sdot{width:8px;height:8px;border-radius:50%;margin-top:7px;flex:none}
+.sdot.g{background:var(--good)}
+.sdot.a{background:var(--warn)}
+.srow h4{margin:0;font-size:14.5px;font-weight:600;line-height:1.4}
+.srow p{margin:3px 0 0;font-size:13.5px;color:var(--ink-2);line-height:1.55}
+.srow p.sub{margin-top:6px;color:var(--ink-3);font-size:12.5px}
+.set .note b{color:var(--ink-2)}
 
 .flash{
   position:fixed;left:50%;bottom:calc(26px + env(safe-area-inset-bottom));
@@ -188,6 +199,20 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
 (function () {
   "use strict";
 
+  /* ─────────────────────────────────────────────────────────────
+     FILL THESE IN ONCE and every device connects by itself —
+     a new phone, tablet or browser then only needs to sign in.
+
+     Safe to commit: the anon/publishable key is meant to be public.
+     It grants nothing on its own; row-level security is what keeps
+     your threads yours, and signups being closed keeps the project
+     to you alone.
+     ───────────────────────────────────────────────────────────── */
+  var DEFAULT_CFG = {
+    url: "https://rupezoschqzjanejelum.supabase.co",   // e.g. "https://abcdefghijkl.supabase.co"
+    key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ1cGV6b3NjaHF6amFuZWplbHVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4MjczNDgsImV4cCI6MjEwMzQwMzM0OH0.X1-XcMQzHvrP78UFe9qr9guGfwGxTaO9vT6ZSSnv7V4"    // e.g. "eyJhbGciOi…"  (or "sb_publishable_…")
+  };
+
   var BUCKETS = [
     { k: "do", label: "Do" },
     { k: "buy", label: "Buy" },
@@ -205,6 +230,7 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
   var statusText = "";
   var syncTimer = null;
   var syncing = false;
+  var lastSync = null;     // ISO time of the last successful sync
   var deferredInstall = null;
 
   /* ---------------- IndexedDB ---------------- */
@@ -277,6 +303,7 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     return items.slice().sort(function (a, b) { return (b.created || "").localeCompare(a.created || ""); });
   }
   function openItems() { return sorted().filter(function (i) { return i.status === "open"; }); }
+  function baked() { return !!(DEFAULT_CFG.url && DEFAULT_CFG.key); }
   function pendingCount() { return items.filter(function (i) { return i.dirty; }).length; }
 
   /* ---------------- mutations ---------------- */
@@ -395,6 +422,8 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
       return changed.length ? putItems(changed) : null;
     }).then(function () {
       syncing = false;
+      lastSync = nowIso();
+      metaSet("lastSync", lastSync);
       setStatus(pendingCount() ? "pending" : "synced");
       render();
     }).catch(function (err) {
@@ -447,8 +476,8 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
       : s === "pending" ? (pendingCount() + " waiting to sync")
       : s === "syncing" ? "syncing…"
       : s === "synced" ? "synced"
-      : s === "offline" ? "offline — safe here, will sync"
-      : s === "signin" ? "sign in again to sync"
+      : s === "offline" ? "offline — saved here"
+      : s === "signin" ? "sign in to sync"
       : "";
   }
 
@@ -589,48 +618,92 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     }).join("") + "</div>";
   }
 
+  function srow(state, title, detail, sub) {
+    return '<div class="srow"><span class="sdot ' + state + '"></span><div>' +
+      "<h4>" + title + "</h4><p>" + detail + "</p>" +
+      (sub ? '<p class="sub">' + sub + "</p>" : "") +
+      "</div></div>";
+  }
+
+  // Row 3 — the honest answer to "is this on my other devices yet?"
+  function sharingRow() {
+    var n = pendingCount();
+    if (!cfg) {
+      return srow("a", "Only on this device",
+        "This device isn't connected to your account, so what you catch here stays here. " +
+        "Your other devices can't see it.");
+    }
+    if (!session) {
+      return srow("a", "Only on this device — for now",
+        "Sign in below and everything sitting here goes up, and everything from your other devices comes down.");
+    }
+    if (navigator.onLine === false) {
+      return srow("a", n ? "Waiting for a connection" : "Offline, and up to date",
+        n
+          ? n + (n === 1 ? " thought is" : " thoughts are") + " saved here and will go up on " + (n === 1 ? "its" : "their") + " own the moment you have signal. " +
+            "You don't have to do anything, or remember to come back."
+          : "Everything here already reached the server before you went offline.");
+    }
+    if (n) {
+      return srow("a", "Sending " + n + (n === 1 ? " thought" : " thoughts"),
+        "Saved here already — just not on your other devices yet. This usually takes a second.");
+    }
+    return srow("g", "On all your devices",
+      "Everything here is on the server, so your phone, iPad and Mac all show the same pile." +
+      (lastSync ? " Last checked " + ago(lastSync) + "." : ""),
+      "The server copy is also your backup: clear this browser and nothing is lost.");
+  }
+
   function settingsView() {
-    var iosHint = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    var ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
     return '<div class="set">' +
+
       "<section>" +
-        "<h2>Works without signal</h2>" +
-        '<p>This app is stored on your device, not fetched from a server each time. Open it in a tunnel, on a plane, ' +
-        'in the mountains — it loads and captures exactly the same. Anything you write is saved before the network is ' +
-        'ever involved.</p>' +
-        '<div class="kv" style="margin-top:12px"><span>Offline copy:</span><b id="swstate">checking…</b></div>' +
-        '<div class="kv"><span>Storage:</span><b id="persisted">checking…</b></div>' +
-        (iosHint
-          ? '<p style="margin-top:12px">To keep an icon on your Home Screen: <b>Share → Add to Home Screen</b>. ' +
-            'Note that the Home Screen copy keeps its own separate pile from Safari on iOS — if you capture from a ' +
-            'Shortcut (which opens Safari), stay with Safari, or turn on syncing below so both end up in the same place.</p>'
+        "<h2>What's happening right now</h2>" +
+        '<div class="card statuscard">' +
+          srow("g", "Saved on this device",
+            items.length + (items.length === 1 ? " thought" : " thoughts") +
+            ", written down the instant you press Enter — before the internet is involved at all.",
+            '<span id="persisted">checking storage…</span>') +
+          '<div id="swrow">' + srow("a", "Checking offline copy…", "One moment.") + "</div>" +
+          sharingRow() +
+        "</div>" +
+        (ios
+          ? '<p class="note" style="margin-top:12px">To keep an icon on your Home Screen: <b>Share → Add to Home Screen</b>.</p>'
           : '<p style="margin-top:12px" id="installrow"></p>') +
       "</section>" +
 
       "<section>" +
-        "<h2>Syncing between devices</h2>" +
-        "<p>Optional. Without it, each browser keeps its own pile — which is fine if you only use one. " +
-        "With it, your phone and laptop share one pile, and the server becomes a backup of everything.</p>" +
+        "<h2>Your account</h2>" +
         (cfg
           ? (session
-              ? '<div class="card"><div class="note ok">Syncing is on' + (session.email ? " for " + esc(session.email) : "") + ".</div>" +
-                '<div class="kv"><span>Waiting to sync:</span><b>' + pendingCount() + "</b></div>" +
+              ? '<div class="card">' +
+                '<div class="note ok">Signed in' + (session.email ? " as " + esc(session.email) : "") + ".</div>" +
                 '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-                '<button class="btn" data-do="syncnow">Sync now</button>' +
-                '<button class="btn ghost" data-do="signout">Sign out</button>' +
-                '<button class="btn ghost" data-do="forget">Remove project</button></div></div>'
+                  '<button class="btn" data-do="syncnow">Check for updates</button>' +
+                  '<button class="btn ghost" data-do="signout">Sign out</button>' +
+                  (baked() ? "" : '<button class="btn ghost" data-do="forget">Disconnect database</button>') +
+                "</div>" +
+                '<div class="note"><b>Check for updates</b> pulls anything new from your other devices right now — ' +
+                "it happens by itself anyway, this is just for impatience.<br>" +
+                "<b>Sign out</b> stops this device syncing. Your threads stay here and the server copy is untouched; " +
+                "signing back in takes one emailed link." +
+                (baked() ? "" : "<br><b>Disconnect database</b> forgets which database this app talks to. You'd have to paste the project details in again — you almost certainly don't want this.") +
+                "</div></div>"
               : '<div class="card"><div class="f"><label>Your email</label>' +
                 '<input id="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com"></div>' +
                 '<button class="btn" data-do="signin">Send me a sign-in link</button>' +
-                '<div class="note" id="authnote">A one-time link. No password to remember.</div>' +
-                '<button class="btn ghost" data-do="forget">Use a different project</button></div>')
+                '<div class="note" id="authnote">A one-time link, no password. Open it on this device and you\'re in.</div>' +
+                (baked() ? "" : '<button class="btn ghost" data-do="forget">Use a different database</button>') +
+                "</div>")
           : '<div class="card">' +
             '<div class="f"><label>Supabase project URL</label>' +
             '<input id="surl" type="url" inputmode="url" autocomplete="off" placeholder="https://xxxx.supabase.co"></div>' +
             '<div class="f"><label>Anon public key</label>' +
             '<input id="skey" type="text" autocomplete="off" placeholder="eyJhbGciOi…"></div>' +
             '<button class="btn" data-do="savecfg">Save</button>' +
-            '<div class="note">Both are in your Supabase dashboard under Project Settings → API. ' +
-            'The anon key is meant to be public; your rows are protected by row-level security, so only you can read them.</div>' +
+            '<div class="note">Both live in your Supabase dashboard under Settings → API Keys.</div>' +
             "</div>") +
       "</section>" +
 
@@ -639,8 +712,24 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
         '<div class="kv"><span>Threads held here:</span><b>' + items.length + "</b></div>" +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">' +
         '<button class="btn ghost" data-do="export">Download a copy</button></div>' +
-        '<div class="note" style="margin-top:8px">A plain JSON file — everything you have ever caught.</div>' +
+        '<div class="note" style="margin-top:8px">A plain JSON file with everything you have ever caught, ' +
+        "including the ones you finished or dropped. Yours to keep, readable without this app.</div>" +
       "</section>" +
+
+      "<section>" +
+        "<h2>When two devices disagree</h2>" +
+        '<p>Every thought gets its own identity the moment you type it. So if you catch things on the iPad, the phone ' +
+        "and the Mac while all three are offline, <b>all of them survive</b> — they're separate thoughts and there's " +
+        "nothing to choose between.</p>" +
+        '<p style="margin-top:10px">The only thing that has to give is when the <b>same</b> thought is changed in two ' +
+        "places before they've spoken. Mark one Done on the iPad while offline, tag that same one Buy on the Mac, and " +
+        "when they meet <b>the later of the two actions wins for that thought</b> — the whole thought takes the newer " +
+        "state, rather than being stitched together. Touch it on only one device and there's no contest at all: the " +
+        "change simply arrives.</p>" +
+        '<p style="margin-top:10px">Nothing is ever destroyed. <b>Drop</b> is a state, not an erase, so even a dropped ' +
+        "thought is still there and can be put back.</p>" +
+      "</section>" +
+
     "</div>";
   }
 
@@ -798,20 +887,36 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
   }
 
   function refreshDiagnostics() {
-    var sw = document.getElementById("swstate");
-    if (sw) {
-      if (!("serviceWorker" in navigator)) sw.textContent = "not supported by this browser";
-      else navigator.serviceWorker.getRegistration().then(function (r) {
-        sw.textContent = r && r.active ? "ready — opens with no signal" : "installing…";
-      }).catch(function () { sw.textContent = "unavailable"; });
+    var row = document.getElementById("swrow");
+    if (row) {
+      var put = function (state, title, detail) { row.innerHTML = srow(state, title, detail); };
+      if (!("serviceWorker" in navigator)) {
+        put("a", "Needs a connection to open",
+          "This browser can't keep a copy of the app, so you'll need signal to open it. What you write is still saved here.");
+      } else {
+        navigator.serviceWorker.getRegistration().then(function (r) {
+          if (r && r.active) {
+            put("g", "Opens with no internet",
+              "The app itself is stored on this device. On a plane, in a tunnel, in the mountains — it opens and " +
+              "catches thoughts exactly as it does now. They go up when you're back.");
+          } else {
+            put("a", "Storing the app…",
+              "Give it a moment, or reload once. Until it finishes, you'd need a connection to open this page.");
+          }
+        }).catch(function () {
+          put("a", "Can't tell right now", "Reload the page and check again.");
+        });
+      }
     }
     var ps = document.getElementById("persisted");
     if (ps) {
       if (navigator.storage && navigator.storage.persisted) {
         navigator.storage.persisted().then(function (p) {
-          ps.textContent = p ? "protected from automatic cleanup" : "normal (may be cleared if the browser needs space)";
+          ps.textContent = p
+            ? "This browser has promised not to clear them to free up space."
+            : "The browser could clear these if it runs short on space — which is exactly what the server copy is for.";
         });
-      } else ps.textContent = "normal";
+      } else ps.textContent = "";
     }
     var ir = document.getElementById("installrow");
     if (ir && deferredInstall) {
@@ -824,13 +929,25 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
   }
 
   /* ---------------- boot ---------------- */
+  // Accept a thought from the URL, encoded or not. Everything after `add=` is the
+  // thought — including & and # — so a Shortcut doesn't need a URL-encode step, and
+  // a stray % (as in "50% off") falls back to the raw text instead of throwing.
   function inbound() {
     var out = [];
     try {
       var q = new URLSearchParams(location.search);
       if (q.get("add")) out.push(q.get("add"));
-      var m = (location.hash || "").match(/[#&]add=([^&]*)/);
-      if (m) out.push(decodeURIComponent(m[1].replace(/\+/g, " ")));
+    } catch (e) {}
+    try {
+      var h = location.hash || "";
+      var m = /[#&]add=/.exec(h);
+      if (m) {
+        // Decode each run of %XX escapes on its own (a run, so multi-byte UTF-8
+        // survives) and leave anything that isn't a valid escape exactly as typed.
+        out.push(h.slice(m.index + m[0].length).replace(/(?:%[0-9A-Fa-f]{2})+/g, function (seq) {
+          try { return decodeURIComponent(seq); } catch (e) { return seq; }
+        }));
+      }
     } catch (e) {}
     return out.filter(function (t) { return t && t.trim(); });
   }
@@ -844,10 +961,13 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     navigator.storage.persisted().then(function (p) { if (!p) navigator.storage.persist().catch(function () {}); });
   }
 
-  Promise.all([allItems(), metaGet("config"), metaGet("session")])
+  Promise.all([allItems(), metaGet("config"), metaGet("session"), metaGet("lastSync")])
     .then(function (r) {
+      lastSync = r[3] || null;
       items = r[0] || [];
-      cfg = r[1] || null;
+      cfg = r[1] || (DEFAULT_CFG.url && DEFAULT_CFG.key
+        ? { url: DEFAULT_CFG.url, key: DEFAULT_CFG.key }
+        : null);
       session = r[2] || null;
       return captureAuthRedirect();
     })
