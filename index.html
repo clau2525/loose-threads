@@ -667,14 +667,7 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
                   '<button class="btn" data-do="syncnow">Check for updates</button>' +
                   '<button class="btn ghost" data-do="signout">Sign out</button>' +
                   (baked() ? "" : '<button class="btn ghost" data-do="forget">Disconnect database</button>') +
-                "</div>" +
-                '<div class="note"><b>Check for updates</b> pulls anything new from your other devices right now — ' +
-                "it happens by itself anyway, this is just for impatience.<br>" +
-                "<b>Sign out</b> stops this device syncing. Your threads stay here and the server copy is untouched; " +
-                "signing back in takes one emailed link." +
-                (baked() ? "" : "<br><b>Disconnect database</b> forgets which database this app talks to. You'd have to paste the project details in again — you almost certainly don't want this.") +
-                "</div></div>"
-              : '<div class="card"><div class="f"><label>Your email</label>' +
+              '<div class="card"><div class="f"><label>Your email</label>' +
                 '<input id="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com"></div>' +
                 '<button class="btn" data-do="signin">Send me a sign-in link</button>' +
                 '<div class="note" id="authnote">A one-time link, no password. Open it on this device and you\'re in.</div>' +
@@ -695,18 +688,9 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
         '<div class="kv"><span>Threads held here:</span><b>' + items.length + "</b></div>" +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">' +
         '<button class="btn ghost" data-do="export">Download a copy</button></div>' +
-        '<div class="note" style="margin-top:8px">A plain JSON file — everything you have ever caught, including ' +
-        "the finished and dropped ones. Yours to keep, readable without this app.</div>" +
+        '<div class="note" style="margin-top:8px"></div>" +
       "</section>" +
 
-      "<section>" +
-        "<h2>When two devices disagree</h2>" +
-        '<p>Catch things on all three devices at once and <b>every one survives</b> — each thought gets its own ' +
-        "identity as you type it, so there is nothing to choose between.</p>" +
-        '<p style="margin-top:10px">The only case that gives is changing the <b>same</b> thought in two places ' +
-        "before they have spoken — then the later action wins for that one thought. Nothing is ever deleted: " +
-        "<b>Drop</b> is a state, not an erase.</p>" +
-      "</section>" +
 
     "</div>";
   }
