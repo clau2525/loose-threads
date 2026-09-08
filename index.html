@@ -159,16 +159,15 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
 .note.bad{color:var(--warn)}
 .kv{display:flex;gap:10px;font-size:13px;color:var(--ink-2);align-items:baseline}
 .kv b{font-weight:500;color:var(--ink)}
-.statuscard{gap:0}
-.srow{display:grid;grid-template-columns:auto 1fr;gap:0 13px;align-items:start;padding:15px 0;border-top:1px solid var(--rule)}
-.srow:first-child{border-top:none;padding-top:0}
-.srow:last-child{padding-bottom:0}
-.sdot{width:8px;height:8px;border-radius:50%;margin-top:7px;flex:none}
+.sdot{width:9px;height:9px;border-radius:50%;flex:none}
 .sdot.g{background:var(--good)}
 .sdot.a{background:var(--warn)}
-.srow h4{margin:0;font-size:14.5px;font-weight:600;line-height:1.4}
-.srow p{margin:3px 0 0;font-size:13.5px;color:var(--ink-2);line-height:1.55}
-.srow p.sub{margin-top:6px;color:var(--ink-3);font-size:12.5px}
+.bigstat{display:grid;grid-template-columns:auto 1fr;gap:0 13px;align-items:start}
+.bigstat .sdot{margin-top:10px}
+.bigstat h3{margin:0;font-family:var(--serif);font-size:20px;font-weight:400;line-height:1.3;letter-spacing:-.01em}
+.bigstat p{margin:5px 0 0;font-size:14px;color:var(--ink-2);line-height:1.55}
+.fine{margin:15px 0 0;padding-top:13px;border-top:1px solid var(--rule);font-size:12.5px;color:var(--ink-3);line-height:1.55}
+.fine.warn{color:var(--warn);border-top:none;padding-top:0;margin-top:9px}
 .set .note b{color:var(--ink-2)}
 
 .flash{
@@ -618,40 +617,27 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     }).join("") + "</div>";
   }
 
-  function srow(state, title, detail, sub) {
-    return '<div class="srow"><span class="sdot ' + state + '"></span><div>' +
-      "<h4>" + title + "</h4><p>" + detail + "</p>" +
-      (sub ? '<p class="sub">' + sub + "</p>" : "") +
-      "</div></div>";
-  }
-
-  // Row 3 — the honest answer to "is this on my other devices yet?"
-  function sharingRow() {
+  // One answer to one question: are these threads everywhere, or still only here?
+  function whereRow() {
     var n = pendingCount();
-    if (!cfg) {
-      return srow("a", "Only on this device",
-        "This device isn't connected to your account, so what you catch here stays here. " +
-        "Your other devices can't see it.");
-    }
-    if (!session) {
-      return srow("a", "Only on this device — for now",
-        "Sign in below and everything sitting here goes up, and everything from your other devices comes down.");
-    }
-    if (navigator.onLine === false) {
-      return srow("a", n ? "Waiting for a connection" : "Offline, and up to date",
-        n
-          ? n + (n === 1 ? " thought is" : " thoughts are") + " saved here and will go up on " + (n === 1 ? "its" : "their") + " own the moment you have signal. " +
-            "You don't have to do anything, or remember to come back."
-          : "Everything here already reached the server before you went offline.");
+    var head = function (state, title, sub) {
+      return '<div class="bigstat"><span class="sdot ' + state + '"></span><div>' +
+        "<h3>" + title + "</h3><p>" + sub + "</p></div></div>";
+    };
+
+    if (!cfg || !session) {
+      return head("a", "Only on this device",
+        "Sign in below and these join your other devices.");
     }
     if (n) {
-      return srow("a", "Sending " + n + (n === 1 ? " thought" : " thoughts"),
-        "Saved here already — just not on your other devices yet. This usually takes a second.");
+      return head("a", n + (n === 1 ? " thread is" : " threads are") + " only on this device",
+        navigator.onLine === false
+          ? "You're offline. " + (n === 1 ? "It'll" : "They'll") + " go up automatically when you're back — nothing to remember."
+          : (n === 1 ? "Sending it now." : "Sending them now."));
     }
-    return srow("g", "On all your devices",
-      "Everything here is on the server, so your phone, iPad and Mac all show the same pile." +
-      (lastSync ? " Last checked " + ago(lastSync) + "." : ""),
-      "The server copy is also your backup: clear this browser and nothing is lost.");
+    return head("g", "On all your devices",
+      (navigator.onLine === false ? "You're offline, but everything here already went up." : "Nothing waiting.") +
+      (lastSync ? " Last checked " + ago(lastSync) + "." : ""));
   }
 
   function settingsView() {
@@ -660,14 +646,11 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     return '<div class="set">' +
 
       "<section>" +
-        "<h2>What's happening right now</h2>" +
-        '<div class="card statuscard">' +
-          srow("g", "Saved on this device",
-            items.length + (items.length === 1 ? " thought" : " thoughts") +
-            ", written down the instant you press Enter — before the internet is involved at all.",
-            '<span id="persisted">checking storage…</span>') +
-          '<div id="swrow">' + srow("a", "Checking offline copy…", "One moment.") + "</div>" +
-          sharingRow() +
+        "<h2>Where your threads are</h2>" +
+        '<div class="card">' +
+          whereRow() +
+          '<p class="fine" id="offlinefine">Saved on this device the moment you type them, then sent on.</p>' +
+          '<p class="fine warn" id="storagewarn" hidden></p>' +
         "</div>" +
         (ios
           ? '<p class="note" style="margin-top:12px">To keep an icon on your Home Screen: <b>Share → Add to Home Screen</b>.</p>'
@@ -712,22 +695,17 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
         '<div class="kv"><span>Threads held here:</span><b>' + items.length + "</b></div>" +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">' +
         '<button class="btn ghost" data-do="export">Download a copy</button></div>' +
-        '<div class="note" style="margin-top:8px">A plain JSON file with everything you have ever caught, ' +
-        "including the ones you finished or dropped. Yours to keep, readable without this app.</div>" +
+        '<div class="note" style="margin-top:8px">A plain JSON file — everything you have ever caught, including ' +
+        "the finished and dropped ones. Yours to keep, readable without this app.</div>" +
       "</section>" +
 
       "<section>" +
         "<h2>When two devices disagree</h2>" +
-        '<p>Every thought gets its own identity the moment you type it. So if you catch things on the iPad, the phone ' +
-        "and the Mac while all three are offline, <b>all of them survive</b> — they're separate thoughts and there's " +
-        "nothing to choose between.</p>" +
-        '<p style="margin-top:10px">The only thing that has to give is when the <b>same</b> thought is changed in two ' +
-        "places before they've spoken. Mark one Done on the iPad while offline, tag that same one Buy on the Mac, and " +
-        "when they meet <b>the later of the two actions wins for that thought</b> — the whole thought takes the newer " +
-        "state, rather than being stitched together. Touch it on only one device and there's no contest at all: the " +
-        "change simply arrives.</p>" +
-        '<p style="margin-top:10px">Nothing is ever destroyed. <b>Drop</b> is a state, not an erase, so even a dropped ' +
-        "thought is still there and can be put back.</p>" +
+        '<p>Catch things on all three devices at once and <b>every one survives</b> — each thought gets its own ' +
+        "identity as you type it, so there is nothing to choose between.</p>" +
+        '<p style="margin-top:10px">The only case that gives is changing the <b>same</b> thought in two places ' +
+        "before they have spoken — then the later action wins for that one thought. Nothing is ever deleted: " +
+        "<b>Drop</b> is a state, not an erase.</p>" +
       "</section>" +
 
     "</div>";
@@ -887,36 +865,29 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
   }
 
   function refreshDiagnostics() {
-    var row = document.getElementById("swrow");
-    if (row) {
-      var put = function (state, title, detail) { row.innerHTML = srow(state, title, detail); };
+    var fine = document.getElementById("offlinefine");
+    if (fine) {
+      var ready = "Saved on this device the moment you type them, then sent on. Works with no internet.";
       if (!("serviceWorker" in navigator)) {
-        put("a", "Needs a connection to open",
-          "This browser can't keep a copy of the app, so you'll need signal to open it. What you write is still saved here.");
+        fine.textContent = "Saved on this device the moment you type them. This browser needs a connection to open the app.";
       } else {
         navigator.serviceWorker.getRegistration().then(function (r) {
-          if (r && r.active) {
-            put("g", "Opens with no internet",
-              "The app itself is stored on this device. On a plane, in a tunnel, in the mountains — it opens and " +
-              "catches thoughts exactly as it does now. They go up when you're back.");
-          } else {
-            put("a", "Storing the app…",
-              "Give it a moment, or reload once. Until it finishes, you'd need a connection to open this page.");
-          }
-        }).catch(function () {
-          put("a", "Can't tell right now", "Reload the page and check again.");
-        });
+          fine.textContent = r && r.active
+            ? ready
+            : "Saved on this device the moment you type them. Open this page once more with a connection so it can work offline too.";
+        }).catch(function () { fine.textContent = ready; });
       }
     }
-    var ps = document.getElementById("persisted");
-    if (ps) {
-      if (navigator.storage && navigator.storage.persisted) {
-        navigator.storage.persisted().then(function (p) {
-          ps.textContent = p
-            ? "This browser has promised not to clear them to free up space."
-            : "The browser could clear these if it runs short on space — which is exactly what the server copy is for.";
-        });
-      } else ps.textContent = "";
+    // Only worth mentioning when there's no server copy to fall back on.
+    var warn = document.getElementById("storagewarn");
+    if (warn && navigator.storage && navigator.storage.persisted) {
+      navigator.storage.persisted().then(function (p) {
+        var atRisk = !p && (!cfg || !session);
+        warn.hidden = !atRisk;
+        if (atRisk) {
+          warn.textContent = "This browser may clear them if it runs short on space, and there's no copy anywhere else. Signing in fixes that.";
+        }
+      });
     }
     var ir = document.getElementById("installrow");
     if (ir && deferredInstall) {
