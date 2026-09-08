@@ -136,6 +136,9 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
 .act.done:hover{color:var(--good)}
 .act.drop:hover{color:var(--warn)}
 .act.back:hover{color:var(--accent)}
+.act.del:hover{color:var(--warn);border-color:var(--warn)}
+.act.del.armed{color:var(--paper);background:var(--warn);border-color:var(--warn);font-weight:500}
+.foot .act.del{font-size:12px;padding:5px 11px;border:1px solid var(--rule)}
 
 .empty{padding:12vh 0;text-align:center;color:var(--ink-3);font-family:var(--serif);font-size:20px;font-style:italic}
 .empty span{display:block;font-family:var(--sans);font-style:normal;font-size:13px;margin-top:10px}
@@ -254,6 +257,7 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     { k: "ask", label: "Ask" }
   ];
   var STALE_DAYS = 7;
+  var PULL_LIMIT = 5000;
   var DB = "loose-threads";
 
   var items = [];          // in-memory mirror of the items store
@@ -265,6 +269,8 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
   var syncTimer = null;
   var syncing = false;
   var lastSync = null;     // ISO time of the last successful sync
+  var pendingDeletes = []; // ids erased here, not yet erased on the server
+  var confirmId = null;    // which item is one tap away from being erased
   var deferredInstall = null;
 
   /* ---------------- IndexedDB ---------------- */
@@ -304,6 +310,7 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
   function putItems(list) {
     return tx("items", "readwrite", function (s) { list.forEach(function (i) { s.put(i); }); });
   }
+  function delItem(id) { return tx("items", "readwrite", function (s) { return s.delete(id); }); }
   function metaGet(k) { return tx("meta", "readonly", function (s) { return s.get(k); }); }
   function metaSet(k, v) { return tx("meta", "readwrite", function (s) { return s.put(v, k); }); }
 
@@ -360,6 +367,14 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     it.dirty = 1;
     putItem(it).then(afterWrite, afterWrite);
   }
+  // Real erasure. The row goes from this device now and from the server on the
+  // next sync; every other device drops it when it sees the row is gone.
+  function removeForever(id) {
+    items = items.filter(function (i) { return i.id !== id; });
+    if (pendingDeletes.indexOf(id) === -1) pendingDeletes.push(id);
+    Promise.all([delItem(id), metaSet("pendingDeletes", pendingDeletes)]).then(afterWrite, afterWrite);
+  }
+
   function afterWrite() {
     setStatus(cfg ? "pending" : "saved");
     scheduleSync();
@@ -416,6 +431,17 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     setStatus("syncing");
 
     return ensureToken().then(function () {
+      if (!pendingDeletes.length) return null;
+      var ids = pendingDeletes.slice();
+      var q = ids.map(function (x) { return "%22" + encodeURIComponent(x) + "%22"; }).join(",");
+      return api("/rest/v1/threads?id=in.(" + q + ")", {
+        method: "DELETE",
+        headers: { Prefer: "return=minimal" }
+      }).then(function () {
+        pendingDeletes = pendingDeletes.filter(function (x) { return ids.indexOf(x) === -1; });
+        return metaSet("pendingDeletes", pendingDeletes);
+      });
+    }).then(function () {
       var dirty = items.filter(function (i) { return i.dirty; });
       if (!dirty.length) return null;
       var rows = dirty.map(function (i) {
@@ -437,9 +463,9 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
       // pulls need a clock everyone agrees on: a thought captured offline at 10:00
       // and pushed at 11:05 carries a 10:00 stamp, so a device that had already
       // pulled up to 11:00 would skip it forever. The pile is small — read it all.
-      return api("/rest/v1/threads?select=*&order=updated.asc");
+      return api("/rest/v1/threads?select=*&order=updated.asc&limit=" + PULL_LIMIT);
     }).then(function (rows) {
-      if (!rows || !rows.length) return null;
+      if (!rows || !rows.length) rows = rows || [];
       var byId = {};
       items.forEach(function (i) { byId[i.id] = i; });
       var changed = [];
@@ -453,7 +479,22 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
         if (local) { Object.keys(merged).forEach(function (k) { local[k] = merged[k]; }); changed.push(local); }
         else { items.push(merged); changed.push(merged); }
       });
-      return changed.length ? putItems(changed) : null;
+      // Anything the server no longer has was erased somewhere else — drop it here
+      // too. Skipped if the response hit the row cap, since a truncated read would
+      // look exactly like a mass deletion.
+      var wiped = [];
+      if (rows.length < PULL_LIMIT) {
+        var onServer = {};
+        rows.forEach(function (r) { onServer[r.id] = 1; });
+        wiped = items.filter(function (i) { return !i.dirty && !onServer[i.id]; });
+        if (wiped.length) {
+          items = items.filter(function (i) { return i.dirty || onServer[i.id]; });
+        }
+      }
+      return Promise.all(
+        [changed.length ? putItems(changed) : null].concat(
+          wiped.map(function (i) { return delItem(i.id); }))
+      );
     }).then(function () {
       syncing = false;
       lastSync = nowIso();
@@ -644,12 +685,24 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     var list = sorted().filter(function (i) { return i.status !== "open"; })
       .sort(function (a, b) { return (b.updated || "").localeCompare(a.updated || ""); });
     if (!list.length) return '<div class="empty">Nothing sorted yet.<span>Things you finish or drop land here.</span></div>';
+    var dropped = list.filter(function (i) { return i.status === "dropped"; }).length;
     return '<div class="list">' + list.map(function (i) {
+      var arm = confirmId === i.id;
       return '<div class="item ' + (i.status === "done" ? "done" : "dropped") + '" data-id="' + i.id + '">' +
         '<div class="item-t">' + esc(i.body) + "</div>" +
         '<div class="item-b"><span class="age">' + (i.status === "done" ? "done " : "dropped ") + ago(i.updated) + "</span>" +
-        '<span class="acts"><button class="act back" data-act="open">Put it back</button></span></div></div>';
-    }).join("") + "</div>";
+        '<span class="acts"><button class="act back" data-act="open">Put it back</button>' +
+        '<button class="act del' + (arm ? " armed" : "") + '" data-act="erase">' +
+        (arm ? "Erase for good?" : "Erase") + "</button></span></div></div>";
+    }).join("") + "</div>" +
+    (dropped
+      ? '<div class="foot"><button class="act del' + (confirmId === "*" ? " armed" : "") + '" data-act="erase-dropped">' +
+        (confirmId === "*"
+          ? "Erase all " + dropped + " dropped, for good?"
+          : "Erase all " + dropped + " dropped") +
+        "</button></div>"
+      : "") +
+    '<div class="foot"><span>Erasing removes a thread from every device and from the server. It cannot be undone.</span></div>';
   }
 
   // One answer to one question: are these threads everywhere, or still only here?
@@ -751,6 +804,7 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     var go = e.target.closest("[data-go]");
     if (go) {
       view = go.dataset.go;
+      confirmId = null;
       if (view === "review") filter = "all";
       render();
       if (view === "settings") refreshDiagnostics();
@@ -758,6 +812,17 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     }
     var f = e.target.closest("[data-filter]");
     if (f) { filter = f.dataset.filter; render(); return; }
+
+    var bulk = e.target.closest('[data-act="erase-dropped"]');
+    if (bulk) {
+      if (confirmId !== "*") { confirmId = "*"; render(); return; }
+      confirmId = null;
+      var doomed = items.filter(function (i) { return i.status === "dropped"; });
+      doomed.forEach(function (i) { removeForever(i.id); });
+      flash("Erased " + doomed.length + ".");
+      render();
+      return;
+    }
 
     var doo = e.target.closest("[data-do]");
     if (doo) { settingsAction(doo.dataset.do, doo); return; }
@@ -775,8 +840,18 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     }
     var act = e.target.closest("[data-act]");
     if (act) {
-      patch(id, { status: act.dataset.act });
-      flash(act.dataset.act === "done" ? "Done." : act.dataset.act === "dropped" ? "Let it go." : "Back in the pile.");
+      var what = act.dataset.act;
+      if (what === "erase") {
+        if (confirmId !== id) { confirmId = id; render(); return; }
+        confirmId = null;
+        removeForever(id);
+        flash("Gone for good.");
+        render();
+        return;
+      }
+      confirmId = null;
+      patch(id, { status: what });
+      flash(what === "done" ? "Done." : what === "dropped" ? "Let it go." : "Back in the pile.");
       render();
     }
   });
@@ -950,9 +1025,10 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--rule);border
     navigator.storage.persisted().then(function (p) { if (!p) navigator.storage.persist().catch(function () {}); });
   }
 
-  Promise.all([allItems(), metaGet("config"), metaGet("session"), metaGet("lastSync")])
+  Promise.all([allItems(), metaGet("config"), metaGet("session"), metaGet("lastSync"), metaGet("pendingDeletes")])
     .then(function (r) {
       lastSync = r[3] || null;
+      pendingDeletes = Array.isArray(r[4]) ? r[4] : [];
       items = r[0] || [];
       cfg = r[1] || (DEFAULT_CFG.url && DEFAULT_CFG.key
         ? { url: DEFAULT_CFG.url, key: DEFAULT_CFG.key }
