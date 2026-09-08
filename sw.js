@@ -31,14 +31,32 @@ self.addEventListener("fetch", function (e) {
   // Anything off this origin (the sync server) goes straight to the network.
   if (url.origin !== self.location.origin) return;
 
-  // Every navigation — including ?add=… and #add=… — is answered by the cached shell,
-  // so the page opens with no signal at all.
+  // Navigations — including ?add=… and #add=… — try the network FIRST, then fall
+  // back to the cached copy. Cache-first was a mistake: a bad copy could never be
+  // replaced from the page, so one broken deploy stranded the device permanently.
+  // The 2.5s ceiling keeps the offline case instant.
   if (req.mode === "navigate") {
-    e.respondWith(
-      caches.match("index.html").then(function (hit) {
-        return hit || fetch(req);
-      })
-    );
+    e.respondWith(new Promise(function (resolve) {
+      var settled = false;
+      function settle(r) { if (!settled && r) { settled = true; resolve(r); } }
+      function fromCache(fallback) {
+        caches.match("index.html").then(function (hit) {
+          settle(hit || fallback || Response.error());
+        }).catch(function () { settle(fallback || Response.error()); });
+      }
+
+      fetch(req).then(function (res) {
+        if (res && res.ok) {
+          var copy = res.clone();
+          caches.open(CACHE).then(function (c) { c.put("index.html", copy); });
+          settle(res);
+        } else {
+          fromCache(res);
+        }
+      }).catch(function () { fromCache(null); });
+
+      setTimeout(function () { if (!settled) fromCache(null); }, 2500);
+    }));
     return;
   }
 
