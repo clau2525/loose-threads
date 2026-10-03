@@ -1,5 +1,5 @@
 /* Offline shell. Bump CACHE to ship an update. */
-var CACHE = "lt-7c04d5a2";
+var CACHE = "lt-9e21b6f0";
 var SHELL = [
   "./",
   "index.html"
