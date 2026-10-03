@@ -67,6 +67,8 @@ Now pick your triggers (you can use several at once):
 Siri and Back Tap are worth setting up even if the widget is your main route — they're the ones that work when your hands are full, which is often exactly when a thought arrives.
 
 > **The iOS quirk:** every URL route above opens **Safari**. If you also Add to Home Screen, iOS gives that copy its own separate storage, so you'd end up with two piles. Pick one — Safari alone works offline just as well — or turn on syncing so both land in the same place.
+>
+> Since the app declares `display: "browser"`, the Home Screen icon opens in Safari itself — same login, same pile as everyday browsing. The quirk above only applies if you switch the manifest back to `standalone`.
 
 ---
 
